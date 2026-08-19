@@ -1,0 +1,93 @@
+# =============================================================================
+# Netlify configuration
+# =============================================================================
+#
+# Why the Next.js runtime plugin is required rather than a plain static publish:
+# `next.config.ts` defines `redirects()`, which maps section paths (/about,
+# /journey, /skills, ...) onto anchors on the single cinematic page. Redirects
+# are a server feature, so `output: "export"` would silently drop them and those
+# URLs would 404. The plugin implements them on Netlify's edge.
+#
+# Netlify auto-detects Next.js and installs the plugin, but declaring it here
+# keeps the behaviour explicit and reproducible.
+# =============================================================================
+
+[build]
+  command = "npm run build"
+  publish = ".next"
+
+[build.environment]
+  # Next.js 16 requires Node 20.9+. Pinned so local and CI agree.
+  NODE_VERSION = "22"
+
+[[plugins]]
+  package = "@netlify/plugin-nextjs"
+
+# -----------------------------------------------------------------------------
+# Local emulation — `netlify dev`
+# -----------------------------------------------------------------------------
+# Runs the real Next dev server behind Netlify's proxy, so redirects and headers
+# behave as they will in production.
+
+[dev]
+  command = "npm run dev"
+  framework = "next"
+  targetPort = 3000
+  port = 8888
+  autoLaunch = false
+
+# -----------------------------------------------------------------------------
+# Caching
+# -----------------------------------------------------------------------------
+# Deliberately NOT `immutable`. Portfolio assets here are replaced in place under
+# stable filenames — `npm run avatar` overwrites the portrait, `npm run
+# hero:video` overwrites the hero loop, and the CV is dropped in as the same
+# `Shubham-Badgujar-Resume.pdf`. Marking those immutable would leave returning
+# visitors on a year-old copy with no way to refresh it.
+#
+# Next's own build output under `/_next/static/*` IS content-hashed, and the
+# runtime plugin already caches it hard. Nothing to add for it here.
+
+[[headers]]
+  for = "/images/*"
+  [headers.values]
+    Cache-Control = "public, max-age=86400, must-revalidate"
+
+[[headers]]
+  for = "/video/*"
+  [headers.values]
+    Cache-Control = "public, max-age=86400, must-revalidate"
+
+[[headers]]
+  for = "/resume/*"
+  [headers.values]
+    Cache-Control = "public, max-age=3600, must-revalidate"
+
+# -----------------------------------------------------------------------------
+# Security headers
+# -----------------------------------------------------------------------------
+# Conservative defaults. No Content-Security-Policy is set: the site inlines
+# styles and uses blob/data URLs for the 3D scenes, so a strict policy would need
+# testing against every page before it could be trusted not to break them.
+
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Content-Type-Options = "nosniff"
+    X-Frame-Options = "SAMEORIGIN"
+    Referrer-Policy = "strict-origin-when-cross-origin"
+    Permissions-Policy = "camera=(), microphone=(), geolocation=(), interest-cohort=()"
+
+# -----------------------------------------------------------------------------
+# Deploy contexts
+# -----------------------------------------------------------------------------
+# Same build everywhere; nothing environment-specific to vary.
+
+[context.production]
+  command = "npm run build"
+
+[context.deploy-preview]
+  command = "npm run build"
+
+[context.branch-deploy]
+  command = "npm run build"

@@ -189,7 +189,8 @@ the deployed dependency set and install it on demand when regenerating video.
 ### Video or images 404 in production
 They must live under `public/` to be served — see [ASSETS.md](./ASSETS.md).
 Check the case of the filename: Netlify's filesystem is case-sensitive where
-Windows is not, so `Hero-Video.mp4` and `hero-video.mp4` are different files
+Windows is not, so `Shubham-Portfolio-Video.mp4` and
+`shubham-portfolio-video.mp4` are different files
 there and identical locally.
 
 ### Resume downloads as `index.html`

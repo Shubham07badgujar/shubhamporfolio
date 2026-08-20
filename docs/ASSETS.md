@@ -29,14 +29,13 @@ public/
 │   ├── shubham-profile.webp      Transparent cut-out (3D scenes + fallbacks)
 │   └── hero-poster.jpg           First frame of the hero video
 ├── video/
-│   ├── hero-video.mp4            Hero background loop (H.264)
-│   └── hero-video.webm           Same loop (VP9)
+│   └── shubham-portfolio-video.mp4   Hero background plate (H.264, 720p)
 └── resume/
     └── Shubham-Badgujar-Resume.pdf
 
 assets/                            (never deployed)
 ├── shubham-badgujar.jpeg          Original photograph — source for `npm run avatar`
-├── shubham badgujar video.mp4     Hero video master — source for `npm run hero:video`
+├── shubham portfolio video.mp4     Hero video master — source for `npm run hero:video`
 └── ...                            Earlier takes and working files
 ```
 
@@ -55,7 +54,7 @@ name, so changing a path is a one-line edit.
 | About portrait | `portrait.image` | `PortraitCard` |
 | Optional reveal image | `portrait.revealImage` | `PortraitCard` cursor reveal |
 | Cut-out avatar | `avatarImage` | 3D scenes, portrait backdrop, fallbacks |
-| Hero video | `video.mp4`, `video.webm` | `HeroVideo` |
+| Hero video | `video.mp4` | `HeroVideo` |
 | Hero poster | `video.poster` | `HeroVideo` first paint |
 | Resume | `resumeUrl` | Navbar, hero, contact, footer, Quick View |
 
@@ -168,23 +167,30 @@ Put the master in `assets/`, point `HERO_SRC` at it in `.env`, then:
 npm run hero:video
 ```
 
-It produces `public/video/hero-video.mp4`, `.webm` and
+It produces `public/video/shubham-portfolio-video.mp4` and
 `public/images/hero-poster.jpg`, and it does three things that matter:
 
-1. **Closes the loop.** Most clips end somewhere different from where they start,
-   so `loop` produces a visible jump. The tail is cross-faded back over the head.
+1. **Downscales to 720p** at a two-pass target of ~0.9 MB. An 8.2 MB master
+   becomes a plate that sits under two scrims covering 78–97% of it, so the
+   discarded detail was never visible anyway.
 2. **Strips the audio.** The plate is always muted; the track is pure payload.
-3. **Downscales to 720p** and re-encodes. An 8.6 MB master becomes ~1.3 MB.
+3. **Leaves the frame rate alone**, and adds `+faststart` plus a keyframe every
+   two seconds so playback starts early and the loop restart stays cheap.
 
-Verify the loop is actually seamless. Set `HERO_SEAM=1` in `.env` and re-run it;
-the script then prints the seam against a normal frame step:
+Two things the script deliberately does *not* do, both of which were tried and
+reverted because they are visible on this particular clip:
 
-```bash
-npm run hero:video
-```
+- **It does not resample the frame rate.** An earlier version forced 25 fps. The
+  master is 24, so ffmpeg duplicated one frame every second and the plate
+  hitched once a second. Whatever the master runs at is what ships.
+- **It does not cross-fade the loop closed.** An earlier version blended the last
+  second back over the first to hide the seam. The camera pushes in across this
+  clip, so that blend mixed a zoomed frame over a wide one and read as the plate
+  briefly changing scale, once per cycle. The clip now plays end to end and
+  restarts on a cut — the lesser of the two artefacts.
 
-A seam within about 3× a normal frame step is invisible. Much higher means the
-cross-fade needs lengthening (`CFG.fade` in the script).
+If you replace the master with a clip whose end already matches its start, the
+seam disappears on its own and neither workaround is needed.
 
 **Subject position matters.** `HeroVideo` centres the clip. If your subject is
 not near the centre, a portrait viewport crops them out — measure and adjust
@@ -249,5 +255,5 @@ To add one: put a 1200×630 image at `public/images/og.jpg` and extend the
 - [ ] Filename case matches the path in `profile.ts` exactly
 - [ ] Portrait keeps the face in the upper two-thirds of a 3:4 crop
 - [ ] Cut-out avatar still has a real alpha channel
-- [ ] Hero video verified with `HERO_SEAM=1` in `.env`
+- [ ] Hero video still reports the master's own frame rate after `npm run hero:video`
 - [ ] `npm run build` passes

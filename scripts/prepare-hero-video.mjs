@@ -1,41 +1,55 @@
 /**
- * Prepares the hero background loop from a source video.
+ * Prepares the hero background plate from the source video.
  *
  *   npm run hero:video
  *
- * Source : assets/shubham badgujar video.mp4   (override with HERO_SRC)
- * Output : public/video/hero-video.mp4 + .webm + public/images/hero-poster.jpg
+ * Source : assets/shubham portfolio video.mp4   (override with HERO_SRC)
+ * Output : public/video/shubham-portfolio-video.mp4 + public/images/hero-poster.jpg
  *
  * What it does, and why:
  *
- *   1. Seamless loop. The source ends somewhere quite different from where it
- *      starts — the camera pushes in over the clip — so playing it on `loop`
- *      jumps hard once per cycle. The tail is cross-faded back over the head,
- *      which costs `fade` seconds of runtime and removes the cut. Verify with
- *      HERO_SEAM=1, which prints the seam against a normal frame step.
- *   2. Strips audio. The plate is decorative and always muted, so the track is
- *      pure payload.
- *   3. Downscales to 720p and re-encodes. The source is a 6.9 Mbps master;
- *      a hero background does not need to be.
+ *   1. Keeps the source frame rate. An earlier version resampled to a fixed
+ *      25 fps; the master is 24, so ffmpeg duplicated one frame every second
+ *      and the plate hitched once per second on playback. Never resample a
+ *      background loop — whatever the master runs at is what ships.
+ *
+ *   2. No cross-fade. An earlier version blended the last second back over the
+ *      first to close the loop seam. The camera pushes in across this clip, so
+ *      that blend mixed a zoomed frame over a wide one and read as the plate
+ *      briefly changing scale, once per cycle. The seam is the lesser evil, so
+ *      the clip now plays end to end and restarts on a cut.
+ *
+ *   3. Downscales to 720p and targets ~1 MB with a two-pass VBR encode. The
+ *      master is a 6.9 Mbps 1080p file; this plate sits under two scrims that
+ *      cover 78-97% of it, so the extra detail is never visible and the bytes
+ *      only compete with the rest of the page for bandwidth. Two-pass rather
+ *      than CRF because the point here is a predictable file size.
+ *
+ *   4. Strips audio. The element is always muted, so the track is pure payload.
+ *
+ *   5. Short GOP + faststart. A keyframe every 2s keeps the loop restart cheap,
+ *      and faststart puts the moov atom first so playback can begin before the
+ *      file has finished downloading.
  */
 import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, statSync, rmSync } from "node:fs";
 import ffmpegPath from "ffmpeg-static";
 
-const SRC = process.env.HERO_SRC ?? "assets/shubham badgujar video.mp4";
+const SRC = process.env.HERO_SRC ?? "assets/shubham portfolio video.mp4";
 const OUT_DIR = "public/video";
-const OUT_MP4 = `${OUT_DIR}/hero-video.mp4`;
-const OUT_WEBM = `${OUT_DIR}/hero-video.webm`;
+const OUT_MP4 = `${OUT_DIR}/shubham-portfolio-video.mp4`;
 const POSTER = "public/images/hero-poster.jpg";
+const PASSLOG = "scripts/.hero-pass";
 
 const CFG = {
   width: 1280,
   height: 720,
-  fps: 25,
-  /** Seconds of cross-fade used to close the loop. */
-  fade: 1.0,
-  crfMp4: 26,
-  crfWebm: 36,
+  /** Target video bitrate. 10s at 780k lands just under 1 MB. */
+  bitrate: "780k",
+  maxrate: "1200k",
+  bufsize: "1600k",
+  /** Keyframe interval in frames (~2s at 24fps). */
+  gop: 48,
 };
 
 if (!existsSync(SRC)) {
@@ -56,85 +70,56 @@ const run = (args, label) =>
     });
   });
 
-/** Reads duration in seconds from ffmpeg's own report. */
-async function probeDuration() {
-  const err = await run(["-hide_banner", "-i", SRC, "-f", "null", "-"], "probe").catch((e) => e.message);
-  const m = /Duration:\s*(\d+):(\d+):([\d.]+)/.exec(err);
-  if (!m) throw new Error("Could not read duration from the source");
-  return Number(m[1]) * 3600 + Number(m[2]) * 60 + Number(m[3]);
+/** Reads duration and frame rate from ffmpeg's own report. */
+async function probe(file) {
+  const err = await run(["-hide_banner", "-i", file, "-f", "null", "-"], "probe").catch((e) => e.message);
+  const d = /Duration:\s*(\d+):(\d+):([\d.]+)/.exec(err);
+  const f = /([\d.]+) fps/.exec(err);
+  const r = /,\s*(\d{2,5})x(\d{2,5})/.exec(err);
+  return {
+    duration: d ? Number(d[1]) * 3600 + Number(d[2]) * 60 + Number(d[3]) : 0,
+    fps: f ? Number(f[1]) : 0,
+    size: r ? `${r[1]}x${r[2]}` : "?",
+  };
 }
 
-const duration = await probeDuration();
-const fade = Math.min(CFG.fade, duration / 3);
-const loopLen = duration - fade;
-console.log(`source ${duration.toFixed(2)}s → loop ${loopLen.toFixed(2)}s (${fade.toFixed(2)}s cross-fade)`);
+const src = await probe(SRC);
+console.log(`source  ${src.size} @ ${src.fps} fps, ${src.duration.toFixed(2)}s`);
+console.log(`target  ${CFG.width}x${CFG.height} @ ${src.fps} fps (unchanged), ~1 MB\n`);
 
-/*
- * out(t) for t in [0, fade)   = tail(t) faded into head(t)
- * out(t) for t in [fade, len) = source(t)
- *
- * so out(0) continues from source(duration) and out(len) continues into
- * source(loopLen) — the two ends meet.
- */
-const scale = `scale=${CFG.width}:${CFG.height}:force_original_aspect_ratio=increase,crop=${CFG.width}:${CFG.height},fps=${CFG.fps}`;
-const filter = [
-  `[0:v]${scale},split=3[a][b][c]`,
-  `[a]trim=0:${fade},setpts=PTS-STARTPTS[head]`,
-  `[b]trim=${loopLen}:${duration},setpts=PTS-STARTPTS[tail]`,
-  `[tail][head]blend=all_expr='A*(1-T/${fade})+B*(T/${fade})'[join]`,
-  `[c]trim=${fade}:${loopLen},setpts=PTS-STARTPTS[body]`,
-  `[join][body]concat=n=2:v=1[v]`,
-].join(";");
+// No `fps=` filter here on purpose — see note 1 above.
+const vf = [
+  `scale=${CFG.width}:${CFG.height}:force_original_aspect_ratio=increase`,
+  `crop=${CFG.width}:${CFG.height}`,
+].join(",");
 
-const common = ["-y", "-i", SRC, "-filter_complex", filter, "-map", "[v]", "-an"];
+const common = [
+  "-y", "-i", SRC,
+  "-c:v", "libx264", "-profile:v", "high", "-preset", "veryslow",
+  "-b:v", CFG.bitrate, "-maxrate", CFG.maxrate, "-bufsize", CFG.bufsize,
+  "-vf", vf,
+  "-g", String(CFG.gop), "-keyint_min", String(Math.round(CFG.gop / 2)),
+  "-pix_fmt", "yuv420p",
+  "-an",
+];
 
-console.log("encoding mp4 …");
-await run(
-  [...common, "-c:v", "libx264", "-profile:v", "high", "-preset", "slow",
-   "-crf", String(CFG.crfMp4), "-pix_fmt", "yuv420p", "-movflags", "+faststart", OUT_MP4],
-  "mp4",
-);
+console.log("encoding pass 1/2 …");
+await run([...common, "-pass", "1", "-passlogfile", PASSLOG, "-f", "null", "-"], "pass 1");
 
-console.log("encoding webm …");
-await run(
-  [...common, "-c:v", "libvpx-vp9", "-crf", String(CFG.crfWebm), "-b:v", "0",
-   "-row-mt", "1", "-deadline", "good", "-cpu-used", "2", OUT_WEBM],
-  "webm",
-);
+console.log("encoding pass 2/2 …");
+await run([...common, "-pass", "2", "-passlogfile", PASSLOG, "-movflags", "+faststart", OUT_MP4], "pass 2");
 
 console.log("writing poster …");
 await run(["-y", "-i", OUT_MP4, "-frames:v", "1", "-q:v", "3", POSTER], "poster");
 
-for (const f of [OUT_MP4, OUT_WEBM, POSTER]) {
-  console.log(`  ${f} — ${(statSync(f).size / 1024).toFixed(0)} KB`);
-}
+// two-pass scratch files
+for (const f of [`${PASSLOG}-0.log`, `${PASSLOG}-0.log.mbtree`]) rmSync(f, { force: true });
 
-/* --------------------------- seam verification ------------------------ */
-if (process.env.HERO_SEAM) {
-  const tmp = "scripts/.seam";
-  mkdirSync(tmp, { recursive: true });
-  const frames = Math.round(loopLen * CFG.fps);
-  const grab = (n, name) =>
-    run(["-y", "-i", OUT_MP4, "-vf", `select=eq(n\\,${n}),scale=160:90`, "-frames:v", "1",
-         "-f", "rawvideo", "-pix_fmt", "rgb24", `${tmp}/${name}.raw`], "seam");
-  await grab(0, "first");
-  await grab(1, "second");
-  await grab(frames - 1, "last");
-  const { readFileSync } = await import("node:fs");
-  const R = (n) => readFileSync(`${tmp}/${n}.raw`);
-  const diff = (a, b) => {
-    let s = 0;
-    for (let i = 0; i < a.length; i++) s += Math.abs(a[i] - b[i]);
-    return s / a.length;
-  };
-  const adjacent = diff(R("first"), R("second"));
-  const seam = diff(R("last"), R("first"));
-  console.log(`\n  adjacent frame step : ${adjacent.toFixed(2)}`);
-  console.log(`  loop seam           : ${seam.toFixed(2)}`);
-  console.log(
-    seam < adjacent * 3
-      ? "  → seam is within normal frame-to-frame variation"
-      : "  → seam still visible; raise CFG.fade",
-  );
-  rmSync(tmp, { recursive: true, force: true });
+const out = await probe(OUT_MP4);
+console.log(`\n  ${OUT_MP4}`);
+console.log(`    ${out.size} @ ${out.fps} fps, ${out.duration.toFixed(2)}s — ${(statSync(OUT_MP4).size / 1048576).toFixed(2)} MB`);
+console.log(`  ${POSTER} — ${(statSync(POSTER).size / 1024).toFixed(0)} KB`);
+
+if (out.fps !== src.fps) {
+  console.warn(`\n  WARNING: frame rate changed ${src.fps} -> ${out.fps}. This causes periodic judder.`);
 }

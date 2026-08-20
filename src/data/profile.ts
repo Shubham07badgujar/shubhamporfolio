@@ -38,16 +38,32 @@ export const profile = {
   ],
   avatarImage: "/images/shubham-profile.webp",
   /**
-   * Hero backdrop. "video" plays the rendered loop (regenerate it with
-   * `npm run hero:video`); "avatar" falls back to the live WebGL portrait.
+   * Hero backdrop. "video" plays the encoded background plate; "avatar" falls
+   * back to the live WebGL portrait.
    */
   heroBackground: "video" as "video" | "avatar",
   video: {
-    mp4: "/video/hero-video.mp4",
-    webm: "/video/hero-video.webm",
+    /**
+     * Built by `npm run hero:video` from the master below: 720p, native 24 fps,
+     * two-pass to ~0.9 MB, no audio, no cross-fade.
+     *
+     * Two settings there are load-bearing and should not be "tidied":
+     *   - the frame rate is never resampled. Forcing 25 on this 24 fps master
+     *     duplicates one frame a second and the plate visibly hitches.
+     *   - no cross-fade closes the loop. The camera pushes in across the clip,
+     *     so blending the tail over the head reads as the plate changing scale
+     *     once per cycle. The hard seam is the lesser evil.
+     */
+    mp4: "/video/shubham-portfolio-video.mp4",
+    /**
+     * No WebM counterpart — the mp4 is the only encode. If one is ever added,
+     * mind the <source> order: the first playable entry wins, so a stale WebM
+     * would silently take precedence over a freshly built mp4.
+     */
+    webm: undefined as string | undefined,
     poster: "/images/hero-poster.jpg",
-    /** Master the loop is rendered from (outside public/ — not shipped). */
-    source: "assets/shubham badgujar video.mp4",
+    /** Master the plate is encoded from (outside public/ — not shipped). */
+    source: "assets/shubham portfolio video.mp4",
   },
   /**
    * The About-section portrait. `image` is shown exactly as supplied — no

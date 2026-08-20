@@ -51,7 +51,7 @@ About section. 15 pages are prerendered at build time.
 
 ## Features
 
-- **Video hero** — a seamless 10s loop, cross-faded so it never jumps, with a
+- **Video hero** — a 10s background plate at its native frame rate, with a
   poster painted by CSS so the first frame is on screen before the video exists.
 - **Cursor-reactive portrait** — supports a two-image cross-reveal under a soft
   mask that follows an eased cursor.
@@ -209,7 +209,7 @@ npm run verify
 | `npm run lint` | ESLint |
 | `npm run verify` | typecheck → lint → build |
 | `npm run avatar` | Regenerate the transparent cut-out |
-| `npm run hero:video` | Re-encode the hero loop |
+| `npm run hero:video` | Re-encode the hero plate (720p, ~0.9 MB) |
 
 The two asset scripts run under `node --env-file-if-exists=.env`, so they read
 their input paths from a `.env` in the project root if one exists and run on
